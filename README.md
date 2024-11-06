@@ -1,7 +1,9 @@
 # SceneDebugger
-Lightweight visualizer/debugger of 3D data with a multi-frame capability. You just need to have something like this in your clipboard (most likely copied from the log file of your debugged 3d app) and then you just hit the Paste From Clipboard button in the app gui:
+Lightweight visualizer/debugger of 3D data with a multi-frame capability.
 
 ![image](https://github.com/user-attachments/assets/6838d39e-8d6f-490c-8b89-7524cf828692)
+
+You just need to have something like this in your clipboard (most likely copied from the log file of your debugged 3d app) and then you just hit the Paste From Clipboard button in the app gui:
 
 ```
 framestart()
