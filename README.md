@@ -27,3 +27,4 @@ set(GLM_ROOT "C:/Devel/glm")
 
 2. Copy imgui (imgui-1.91.4.zip should certainly work) to SceneDebugger root directory
 3. Use CMake as usual
+4. If launching from Visual Studio, do not forget to set the Debugging Working Directory correctly, otherwise the shader files will not be loaded correctly.
