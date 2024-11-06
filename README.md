@@ -1,5 +1,5 @@
 # SceneDebugger
-Lightweight visualizer/debugger of 3D data with a multi-frame capability. You just need to have something like this in your clipboard and then you just hit the Paste rom Clipboard button in the app gui:
+Lightweight visualizer/debugger of 3D data with a multi-frame capability. You just need to have something like this in your clipboard and then you just hit the Paste From Clipboard button in the app gui:
 
 ```
 framestart()
