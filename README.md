@@ -1,6 +1,8 @@
 # SceneDebugger
 Lightweight visualizer/debugger of 3D data with a multi-frame capability. You just need to have something like this in your clipboard and then you just hit the Paste From Clipboard button in the app gui:
 
+![image](https://github.com/user-attachments/assets/6838d39e-8d6f-490c-8b89-7524cf828692)
+
 ```
 framestart()
 drawtriangle "tri1" [3068.184376,-479.325038,1088.290321][3074.934611,-481.091150,1088.166570][3076.687322,-474.356001,1087.650898]
