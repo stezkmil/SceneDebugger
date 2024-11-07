@@ -12,11 +12,13 @@ public:
 	glm::vec3 target;
 	float distance;
 	float pitch, yaw;
+	float nearPlane, farPlane; // Add these members
 
 	Camera()
 		: target(0.0f), distance(10.0f), pitch(0.0f), yaw(-90.0f),
 		lastX(0.0f), lastY(0.0f), firstMouse(true),
-		rightButtonPressed(false), middleButtonPressed(false) {}
+		rightButtonPressed(false), middleButtonPressed(false),
+		nearPlane(0.1f), farPlane(1000.0f) {} // Initialize near and far planes
 
 	glm::mat4 getViewMatrix() {
 		glm::vec3 position;
@@ -26,8 +28,16 @@ public:
 		return glm::lookAt(position, target, glm::vec3(0, 1, 0));
 	}
 
-	glm::mat4 getProjectionMatrix(float aspectRatio) {
-		return glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 1000.0f);
+	glm::mat4 getProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) {
+		return glm::perspective(glm::radians(45.0f), aspectRatio, nearPlane, farPlane);
+	}
+
+	glm::vec3 getPosition() {
+		glm::vec3 position;
+		position.x = target.x + distance * cos(glm::radians(pitch)) * cos(glm::radians(yaw));
+		position.y = target.y + distance * sin(glm::radians(pitch));
+		position.z = target.z + distance * cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+		return position;
 	}
 
 	void processInput(GLFWwindow* window) {
@@ -106,7 +116,7 @@ public:
 
 			// Adjust the target position
 			target -= right * xoffset;
-			target -= up * yoffset;
+			target += up * yoffset;
 		}
 		else {
 			middleButtonPressed = false;
