@@ -459,6 +459,11 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 			else if (prim.type == "drawline" || prim.type == "overlayline") {
 				glDrawArrays(GL_LINES, 0, 2);
 			}
+			else if (prim.type == "drawpoint") {
+				// Set point size
+				glPointSize(5.0f); // Adjust the size as needed
+				glDrawArrays(GL_POINTS, 0, prim.vertices.size());
+			}
 
 			// Cleanup
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -644,6 +649,81 @@ void parseInputData(const std::string& data) {
 			}
 			prim.vertices = vertices;
 			currentFrame.primitives.push_back(prim);
+		}
+		// Check for drawpoint
+		else if (std::distance(it, data.end()) >= 9 && std::equal(it, it + 9, "drawpoint")) {
+			it += 9; // Move iterator past "drawpoint"
+			Primitive prim;
+			prim.type = "drawpoint";
+
+			// Skip whitespace
+			while (it != data.end() && std::isspace(*it)) ++it;
+
+			// Parse name
+			if (it != data.end() && *it == '"') {
+				++it; // Skip opening quote
+				std::string name;
+				while (it != data.end() && *it != '"') {
+					name += *it;
+					++it;
+				}
+				if (it != data.end()) {
+					++it; // Skip closing quote
+					prim.name = name;
+				}
+				else {
+					// Handle error: unmatched quote
+					prim.name = "Unnamed Point";
+				}
+			}
+			else {
+				// Handle error: name not provided or not in quotes
+				prim.name = "Unnamed Point";
+			}
+
+			// Generate and assign a random color
+			prim.color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
+
+			// Parse vertex
+			// Skip to '['
+			while (it != data.end() && *it != '[') ++it;
+			if (it != data.end()) ++it; // Skip '['
+
+			Vector3 vertex;
+			std::string numStr;
+			int coordIndex = 0;
+			while (it != data.end() && *it != ']') {
+				if (std::isdigit(*it) || *it == '.' || *it == '-') {
+					numStr += *it;
+				}
+				else if (*it == ',') {
+					if (!numStr.empty()) {
+						float val = std::stof(numStr);
+						if (coordIndex == 0) vertex.x = val;
+						else if (coordIndex == 1) vertex.y = val;
+						numStr.clear();
+						++coordIndex;
+					}
+				}
+				++it;
+			}
+			// Capture the last coordinate (z)
+			if (!numStr.empty()) {
+				float val = std::stof(numStr);
+				vertex.z = val;
+				numStr.clear();
+			}
+
+			// Create a Vertex with position and normal (normal is not used for points but required by the structure)
+			Vertex vtx;
+			vtx.position = glm::vec3(vertex.x, vertex.y, vertex.z);
+			vtx.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Default normal
+
+			prim.vertices.push_back(vtx);
+			currentFrame.primitives.push_back(prim);
+
+			// Ensure we don't increment past the end
+			if (it != data.end()) ++it; // Skip ']'
 		}
 
 		else {
