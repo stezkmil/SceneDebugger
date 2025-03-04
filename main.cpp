@@ -41,12 +41,11 @@ struct Vertex {
 	glm::vec3 normal;
 };
 
-
 struct Primitive {
 	std::string name;
-	std::string type; // "drawtriangle", "drawline", "overlaymesh"
-	std::vector<Vertex> vertices; // Changed from Vector3 to Vertex
-	std::vector<unsigned int> indices; // For indexed drawing
+	std::string type; // "drawtriangle", "drawline", "drawpoint", "overlaymesh"
+	std::vector<Vertex> vertices;
+	std::vector<unsigned int> indices; // For indexed drawing (overlaymesh)
 	glm::vec4 color;
 };
 
@@ -165,8 +164,6 @@ void parseOBJData(const std::string& data) {
 	overlayPrimitives.push_back(meshPrim);
 }
 
-
-
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 	// Prevent division by zero
 	if (height == 0) height = 1;
@@ -265,7 +262,6 @@ int main() {
 		if (height == 0) height = 1; // Prevent division by zero
 		float aspectRatio = width / (float)height;
 
-		// Use the updated getProjectionMatrix() method with near and far planes
 		glm::mat4 projection = camera.getProjectionMatrix(aspectRatio, camera.nearPlane, camera.farPlane);
 		glm::mat4 view = camera.getViewMatrix();
 		glm::mat4 model = glm::mat4(1.0f); // Identity matrix
@@ -275,8 +271,8 @@ int main() {
 		shaderProgram.setMat4("model", model);
 
 		// Set lighting uniforms
-		glm::vec3 lightPos = camera.target + glm::vec3(0.0f, 10.0f, 10.0f); // Light position
-		glm::vec3 viewPos = camera.getPosition(); // Camera position
+		glm::vec3 lightPos = camera.target + glm::vec3(0.0f, 10.0f, 10.0f);
+		glm::vec3 viewPos = camera.getPosition();
 		shaderProgram.setVec3("lightPos", lightPos);
 		shaderProgram.setVec3("viewPos", viewPos);
 
@@ -303,11 +299,9 @@ int main() {
 
 // Process input
 void processInput(GLFWwindow* window) {
-	// Close window on pressing 'Escape'
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
 
-	// Implement camera controls
 	camera.processInput(window);
 }
 
@@ -338,7 +332,6 @@ void renderGUI() {
 		fitView = true;
 	}
 
-	// Add the "Clear Frames" button
 	if (ImGui::Button("Clear Frames")) {
 		frames.clear();
 		currentFrameIndex = 0;
@@ -347,7 +340,7 @@ void renderGUI() {
 
 	if (!frames.empty()) {
 		if (ImGui::SliderInt("Frame", &currentFrameIndex, 0, frames.size() - 1)) {
-			//fitView = true;
+			// optional: fitView = true;
 		}
 
 		ImGui::Text("Primitives:");
@@ -393,7 +386,6 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 			static GLuint overlayVAO = 0, overlayVBO = 0, overlayEBO = 0;
 			static size_t numIndices = 0;
 
-			// If the VAO is not generated yet, generate and bind buffers
 			if (overlayVAO == 0) {
 				glGenVertexArrays(1, &overlayVAO);
 				glGenBuffers(1, &overlayVBO);
@@ -420,10 +412,8 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 				glBindVertexArray(0);
 			}
 
-			// Set shader uniforms
+			shaderProgram.setBool("useLighting", true);
 			shaderProgram.setVec4("primitiveColor", glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
-
-			// Bind and draw the mesh
 			glBindVertexArray(overlayVAO);
 			glDrawElements(GL_TRIANGLES, numIndices, GL_UNSIGNED_INT, 0);
 			glBindVertexArray(0);
@@ -434,6 +424,7 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 			glGenBuffers(1, &VBO);
 
 			std::vector<float> vertices;
+			vertices.reserve(prim.vertices.size() * 3);
 			for (const auto& v : prim.vertices) {
 				vertices.push_back(v.position.x);
 				vertices.push_back(v.position.y);
@@ -449,6 +440,8 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 			glEnableVertexAttribArray(0);
 
+			shaderProgram.setBool("useLighting", false);
+
 			// Set the primitive color uniform
 			shaderProgram.setVec4("primitiveColor", prim.color);
 
@@ -460,9 +453,8 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 				glDrawArrays(GL_LINES, 0, 2);
 			}
 			else if (prim.type == "drawpoint") {
-				// Set point size
 				glPointSize(5.0f); // Adjust the size as needed
-				glDrawArrays(GL_POINTS, 0, prim.vertices.size());
+				glDrawArrays(GL_POINTS, 0, (GLsizei)prim.vertices.size());
 			}
 
 			// Cleanup
@@ -474,14 +466,52 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 	}
 }
 
-
-
-
-// Parse input data
+// Updated parseInputData to handle optional RGBA color bracket
 void parseInputData(const std::string& data) {
 	std::string::const_iterator it = data.begin();
 	Frame currentFrame;
 	bool inFrame = false;
+
+	auto parseOptionalColor = [&](glm::vec4& color) {
+		// Skip whitespace
+		while (it != data.end() && std::isspace(*it)) ++it;
+
+		// If the next character is '[', parse RGBA
+		if (it != data.end() && *it == '[') {
+			++it; // skip '['
+			float rgba[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			std::string numStr;
+			int index = 0;
+			while (it != data.end() && *it != ']') {
+				if ((std::isdigit(*it) || *it == '.' || *it == '-')) {
+					numStr += *it;
+				}
+				else if (*it == ',') {
+					if (!numStr.empty()) {
+						float val = std::stof(numStr);
+						rgba[index] = val;
+						numStr.clear();
+						++index;
+						if (index > 3) break; // in case too many
+					}
+				}
+				++it;
+			}
+			// Capture the last value (A)
+			if (!numStr.empty() && index < 4) {
+				float val = std::stof(numStr);
+				rgba[index] = val;
+				numStr.clear();
+			}
+			color = glm::vec4(rgba[0], rgba[1], rgba[2], rgba[3]);
+
+			if (it != data.end()) ++it; // skip ']'
+		}
+		else {
+			// No bracket found, use random color
+			color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
+		}
+		};
 
 	while (it != data.end()) {
 		// Skip whitespace
@@ -511,40 +541,29 @@ void parseInputData(const std::string& data) {
 			// Skip whitespace
 			while (it != data.end() && std::isspace(*it)) ++it;
 
-			// Check for opening double quote
+			// Parse name (optional quotes)
 			if (it != data.end() && *it == '"') {
-				++it; // Skip opening quote
+				++it; // skip quote
 				std::string name;
 				while (it != data.end() && *it != '"') {
 					name += *it;
 					++it;
 				}
-				if (it != data.end()) {
-					++it; // Skip closing quote
-					prim.name = name;
-				}
-				else {
-					// Handle error: unmatched quote
-					prim.name = "Unnamed Triangle";
-				}
+				if (it != data.end()) ++it; // skip closing quote
+				prim.name = name;
 			}
 			else {
-				// Handle error: name not provided or not in quotes
 				prim.name = "Unnamed Triangle";
 			}
 
-			// Generate and assign a random color
-			prim.color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
-
-			// Parse vertices
+			// Parse 3 vertices
 			std::vector<Vertex> vertices;
 			for (int i = 0; i < 3; ++i) {
-				// Skip to '['
 				while (it != data.end() && *it != '[') ++it;
 				if (it == data.end()) break;
-				++it; // Skip '['
+				++it; // skip '['
 
-				Vertex vertex;
+				Vertex vert{};
 				std::string numStr;
 				int coordIndex = 0;
 				while (it != data.end() && *it != ']') {
@@ -554,71 +573,63 @@ void parseInputData(const std::string& data) {
 					else if (*it == ',') {
 						if (!numStr.empty()) {
 							float val = std::stof(numStr);
-							if (coordIndex == 0) vertex.position.x = val;
-							else if (coordIndex == 1) vertex.position.y = val;
+							if (coordIndex == 0) vert.position.x = val;
+							else if (coordIndex == 1) vert.position.y = val;
 							numStr.clear();
 							++coordIndex;
 						}
 					}
 					++it;
 				}
-				// Capture the last coordinate (z)
+				// last coordinate
 				if (!numStr.empty()) {
 					float val = std::stof(numStr);
-					vertex.position.z = val;
+					vert.position.z = val;
 					numStr.clear();
 				}
-				vertices.push_back(vertex);
+				vertices.push_back(vert);
 
-				// Ensure we don't increment past the end
-				if (it != data.end()) ++it; // Skip ']'
+				if (it != data.end()) ++it; // skip ']'
 			}
 			prim.vertices = vertices;
+
+			// Parse optional color
+			parseOptionalColor(prim.color);
+
 			currentFrame.primitives.push_back(prim);
 		}
 		// Check for drawline
 		else if (std::distance(it, data.end()) >= 8 && std::equal(it, it + 8, "drawline")) {
-			it += 8; // Move iterator past "drawline"
+			it += 8;
 			Primitive prim;
 			prim.type = "drawline";
 
 			// Skip whitespace
 			while (it != data.end() && std::isspace(*it)) ++it;
 
-			// Check for opening double quote
+			// Parse name
 			if (it != data.end() && *it == '"') {
-				++it; // Skip opening quote
+				++it;
 				std::string name;
 				while (it != data.end() && *it != '"') {
 					name += *it;
 					++it;
 				}
-				if (it != data.end()) {
-					++it; // Skip closing quote
-					prim.name = name;
-				}
-				else {
-					// Handle error: unmatched quote
-					prim.name = "Unnamed Line";
-				}
+				if (it != data.end()) ++it;
+				prim.name = name;
 			}
 			else {
-				// Handle error: name not provided or not in quotes
 				prim.name = "Unnamed Line";
 			}
 
-			// Generate and assign a random color
-			prim.color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
-
-			// Parse vertices
+			// Parse 2 vertices
 			std::vector<Vertex> vertices;
 			for (int i = 0; i < 2; ++i) {
-				// Skip to '['
 				while (it != data.end() && *it != '[') ++it;
 				if (it == data.end()) break;
-				++it; // Skip '['
+				++it; // skip '['
 
-				Vertex vertex;
+				Vertex vert{};
 				std::string numStr;
 				int coordIndex = 0;
 				while (it != data.end() && *it != ']') {
@@ -628,31 +639,34 @@ void parseInputData(const std::string& data) {
 					else if (*it == ',') {
 						if (!numStr.empty()) {
 							float val = std::stof(numStr);
-							if (coordIndex == 0) vertex.position.x = val;
-							else if (coordIndex == 1) vertex.position.y = val;
+							if (coordIndex == 0) vert.position.x = val;
+							else if (coordIndex == 1) vert.position.y = val;
 							numStr.clear();
 							++coordIndex;
 						}
 					}
 					++it;
 				}
-				// Capture the last coordinate (z)
+				// last coordinate
 				if (!numStr.empty()) {
 					float val = std::stof(numStr);
-					vertex.position.z = val;
+					vert.position.z = val;
 					numStr.clear();
 				}
-				vertices.push_back(vertex);
+				vertices.push_back(vert);
 
-				// Ensure we don't increment past the end
-				if (it != data.end()) ++it; // Skip ']'
+				if (it != data.end()) ++it; // skip ']'
 			}
 			prim.vertices = vertices;
+
+			// Parse optional color
+			parseOptionalColor(prim.color);
+
 			currentFrame.primitives.push_back(prim);
 		}
 		// Check for drawpoint
 		else if (std::distance(it, data.end()) >= 9 && std::equal(it, it + 9, "drawpoint")) {
-			it += 9; // Move iterator past "drawpoint"
+			it += 9;
 			Primitive prim;
 			prim.type = "drawpoint";
 
@@ -661,77 +675,70 @@ void parseInputData(const std::string& data) {
 
 			// Parse name
 			if (it != data.end() && *it == '"') {
-				++it; // Skip opening quote
+				++it;
 				std::string name;
 				while (it != data.end() && *it != '"') {
 					name += *it;
 					++it;
 				}
-				if (it != data.end()) {
-					++it; // Skip closing quote
-					prim.name = name;
-				}
-				else {
-					// Handle error: unmatched quote
-					prim.name = "Unnamed Point";
-				}
+				if (it != data.end()) ++it;
+				prim.name = name;
 			}
 			else {
-				// Handle error: name not provided or not in quotes
 				prim.name = "Unnamed Point";
 			}
 
-			// Generate and assign a random color
-			prim.color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
-
-			// Parse vertex
-			// Skip to '['
+			// Parse single vertex
 			while (it != data.end() && *it != '[') ++it;
-			if (it != data.end()) ++it; // Skip '['
+			if (it != data.end()) ++it; // skip '['
 
-			Vector3 vertex;
-			std::string numStr;
-			int coordIndex = 0;
-			while (it != data.end() && *it != ']') {
-				if (std::isdigit(*it) || *it == '.' || *it == '-') {
-					numStr += *it;
-				}
-				else if (*it == ',') {
-					if (!numStr.empty()) {
-						float val = std::stof(numStr);
-						if (coordIndex == 0) vertex.x = val;
-						else if (coordIndex == 1) vertex.y = val;
-						numStr.clear();
-						++coordIndex;
+			Vertex vtx{};
+			{
+				std::string numStr;
+				int coordIndex = 0;
+				while (it != data.end() && *it != ']') {
+					if (std::isdigit(*it) || *it == '.' || *it == '-') {
+						numStr += *it;
 					}
+					else if (*it == ',') {
+						if (!numStr.empty()) {
+							float val = std::stof(numStr);
+							if (coordIndex == 0) vtx.position.x = val;
+							else if (coordIndex == 1) vtx.position.y = val;
+							numStr.clear();
+							++coordIndex;
+						}
+					}
+					++it;
 				}
-				++it;
+				// last coordinate
+				if (!numStr.empty()) {
+					float val = std::stof(numStr);
+					vtx.position.z = val;
+					numStr.clear();
+				}
 			}
-			// Capture the last coordinate (z)
-			if (!numStr.empty()) {
-				float val = std::stof(numStr);
-				vertex.z = val;
-				numStr.clear();
-			}
-
-			// Create a Vertex with position and normal (normal is not used for points but required by the structure)
-			Vertex vtx;
-			vtx.position = glm::vec3(vertex.x, vertex.y, vertex.z);
-			vtx.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Default normal
+			vtx.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+			if (it != data.end()) ++it; // skip ']'
 
 			prim.vertices.push_back(vtx);
+
+			// Parse optional color
+			parseOptionalColor(prim.color);
+
 			currentFrame.primitives.push_back(prim);
-
-			// Ensure we don't increment past the end
-			if (it != data.end()) ++it; // Skip ']'
 		}
-
+		// framestart / frameend or unknown text
 		else {
 			if (it != data.end()) ++it;
 		}
 	}
-}
 
+	if (inFrame) {
+		// If there's an unclosed frame, push it at the end (optional)
+		frames.push_back(currentFrame);
+	}
+}
 
 // Fit data into view
 void fitDataIntoView() {
@@ -745,7 +752,7 @@ void fitDataIntoView() {
 		const Frame& frame = frames[currentFrameIndex];
 		for (const auto& prim : frame.primitives) {
 			for (const auto& vert : prim.vertices) {
-				glm::vec3 position(vert.position.x, vert.position.y, vert.position.z);
+				glm::vec3 position = vert.position;
 				minBounds = glm::min(minBounds, position);
 				maxBounds = glm::max(maxBounds, position);
 			}
@@ -779,15 +786,11 @@ void fitDataIntoView() {
 	camera.distance = radius * 2.0f;
 
 	// Calculate distances from camera position to the near and far points of the bounding sphere
-	float nearPlane = 0.1f; // Slightly before the closest point
-	float farPlane = camera.distance + radius * 1.5f;  // Slightly beyond the farthest point
+	float nearPlane = 0.1f;
+	float farPlane = camera.distance + radius * 1.5f;
 
-	// Ensure nearPlane is positive and not too close to zero
 	nearPlane = std::max(nearPlane, 0.1f);
 
-	// Update the camera's near and far planes
 	camera.nearPlane = nearPlane;
 	camera.farPlane = farPlane;
 }
-
-

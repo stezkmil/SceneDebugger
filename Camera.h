@@ -127,8 +127,8 @@ public:
 		Camera* cam = static_cast<Camera*>(glfwGetWindowUserPointer(window));
 		if (cam) {
 			cam->distance *= (1.0f - static_cast<float>(yoffset) * 0.1f);
-			if (cam->distance < 1.0f) cam->distance = 1.0f;
-			if (cam->distance > 1000.0f) cam->distance = 1000.0f;
+			//if (cam->distance < 1.0f) cam->distance = 1.0f;
+			//if (cam->distance > 1000.0f) cam->distance = 1000.0f;
 		}
 	}
 
