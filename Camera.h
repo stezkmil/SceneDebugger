@@ -18,14 +18,18 @@ public:
 		: target(0.0f), distance(10.0f), pitch(0.0f), yaw(-90.0f),
 		lastX(0.0f), lastY(0.0f), firstMouse(true),
 		rightButtonPressed(false), middleButtonPressed(false),
-		nearPlane(0.1f), farPlane(1000.0f) {} // Initialize near and far planes
+		nearPlane(0.1f), farPlane(10000.0f) {
+	} // Initialize near and far planes
 
 	glm::mat4 getViewMatrix() {
 		glm::vec3 position;
+		// spherical coords with Z-up
 		position.x = target.x + distance * cos(glm::radians(pitch)) * cos(glm::radians(yaw));
-		position.y = target.y + distance * sin(glm::radians(pitch));
-		position.z = target.z + distance * cos(glm::radians(pitch)) * sin(glm::radians(yaw));
-		return glm::lookAt(position, target, glm::vec3(0, 1, 0));
+		position.y = target.y + distance * cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+		position.z = target.z + distance * sin(glm::radians(pitch));
+
+		// world-up is now +Z
+		return glm::lookAt(position, target, glm::vec3(0, 0, 1));
 	}
 
 	glm::mat4 getProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) {
@@ -35,8 +39,8 @@ public:
 	glm::vec3 getPosition() {
 		glm::vec3 position;
 		position.x = target.x + distance * cos(glm::radians(pitch)) * cos(glm::radians(yaw));
-		position.y = target.y + distance * sin(glm::radians(pitch));
-		position.z = target.z + distance * cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+		position.y = target.y + distance * cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+		position.z = target.z + distance * sin(glm::radians(pitch));
 		return position;
 	}
 
@@ -107,11 +111,10 @@ public:
 			// Calculate right and up vectors
 			glm::vec3 front;
 			front.x = cos(glm::radians(pitch)) * cos(glm::radians(yaw));
-			front.y = sin(glm::radians(pitch));
-			front.z = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
-			front = glm::normalize(front);
+			front.y = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
+			front.z = sin(glm::radians(pitch));
 
-			glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
+			glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0, 0, 1)));
 			glm::vec3 up = glm::normalize(glm::cross(right, front));
 
 			// Adjust the target position

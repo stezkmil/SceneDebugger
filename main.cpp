@@ -791,6 +791,6 @@ void fitDataIntoView() {
 
 	nearPlane = std::max(nearPlane, 0.1f);
 
-	camera.nearPlane = nearPlane;
-	camera.farPlane = farPlane;
+	//camera.nearPlane = nearPlane;
+	//camera.farPlane = farPlane;
 }
