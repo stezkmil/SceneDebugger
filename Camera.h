@@ -44,6 +44,8 @@ public:
 		return position;
 	}
 
+	void setTarget(const glm::vec3& p) { target = p; }
+
 	void processInput(GLFWwindow* window) {
 		ImGuiIO& io = ImGui::GetIO();
 		if (io.WantCaptureMouse) return;

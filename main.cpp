@@ -31,6 +31,12 @@ void parseInputData(const std::string& data);
 void parseOBJData(const std::string& data);
 void renderGUI();
 void fitDataIntoView();
+bool rayTriangleIntersect(const glm::vec3& orig, const glm::vec3& dir,
+	const glm::vec3& v0, const glm::vec3& v1,
+	const glm::vec3& v2, float& tOut);
+
+void mouse_button_callback(GLFWwindow* window,
+	int button, int action, int mods);
 
 struct Vector3 {
 	float x, y, z;
@@ -170,6 +176,91 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
 }
 
+void mouse_button_callback(GLFWwindow* window,
+	int button, int action, int /*mods*/)
+{
+	// We only care about middle-button presses
+	if (button != GLFW_MOUSE_BUTTON_MIDDLE || action != GLFW_PRESS) return;
+
+	static double lastClick = 0.0;
+	double now = glfwGetTime();
+	const double dblClickTime = 0.30;          // seconds
+
+	if (now - lastClick > dblClickTime) {       // first click
+		lastClick = now;
+		return;
+	}
+	lastClick = 0.0;                            // reset for next pair
+
+	//--------------------------------------------------------------  
+	// *** Double-click detected – cast a picking ray ***
+	//--------------------------------------------------------------
+	double mx, my; glfwGetCursorPos(window, &mx, &my);
+	int w, h;      glfwGetFramebufferSize(window, &w, &h);
+	if (h == 0) return;
+
+	// Get camera from window user-ptr
+	Camera* cam = static_cast<Camera*>(glfwGetWindowUserPointer(window));
+	if (!cam) return;
+
+	float nx = (2.0f * float(mx) / w) - 1.0f;      // NDC
+	float ny = 1.0f - (2.0f * float(my) / h);
+
+	glm::mat4  proj = cam->getProjectionMatrix(float(w) / h, cam->nearPlane, cam->farPlane);
+	glm::mat4  view = cam->getViewMatrix();
+	glm::mat4  invPV = glm::inverse(proj * view);
+
+	glm::vec4 pNear = invPV * glm::vec4(nx, ny, -1.f, 1.f);
+	glm::vec4 pFar = invPV * glm::vec4(nx, ny, 1.f, 1.f);
+	pNear /= pNear.w;  pFar /= pFar.w;
+
+	glm::vec3 rayOrig = glm::vec3(pNear);
+	glm::vec3 rayDir = glm::normalize(glm::vec3(pFar) - rayOrig);
+
+	//--------------------------------------------------------------  
+	// Test the ray against every triangle we know about
+	//--------------------------------------------------------------
+	float  bestT = 1e30f;
+	glm::vec3 bestPt;
+
+	auto tryTriangle = [&](const glm::vec3& a,
+		const glm::vec3& b,
+		const glm::vec3& c)
+		{
+			float t;
+			if (rayTriangleIntersect(rayOrig, rayDir, a, b, c, t) && t < bestT)
+			{
+				bestT = t;
+				bestPt = rayOrig + rayDir * t;
+			}
+		};
+
+	// 1) overlay mesh (usually the heavy one)
+	for (const auto& prim : overlayPrimitives)
+		if (prim.type == "overlaymesh")
+			for (size_t i = 0; i + 2 < prim.indices.size(); i += 3)
+				tryTriangle(prim.vertices[prim.indices[i]].position,
+					prim.vertices[prim.indices[i + 1]].position,
+					prim.vertices[prim.indices[i + 2]].position);
+
+	// 2) triangles in the current frame
+	if (!frames.empty()) {
+		const Frame& f = frames[currentFrameIndex];
+		for (const auto& prim : f.primitives)
+			if (prim.type == "drawtriangle")
+				tryTriangle(prim.vertices[0].position,
+					prim.vertices[1].position,
+					prim.vertices[2].position);
+	}
+
+	//--------------------------------------------------------------  
+	// If we hit something – re-centre the camera
+	//--------------------------------------------------------------
+	if (bestT < 1e29f)
+		cam->setTarget(bestPt);
+}
+
+
 int main() {
 	// Initialize GLFW
 	if (!glfwInit()) {
@@ -207,6 +298,8 @@ int main() {
 
 	// Set scroll callback
 	glfwSetScrollCallback(window, Camera::scroll_callback);
+
+	glfwSetMouseButtonCallback(window, mouse_button_callback);
 
 	// Initialize GLEW
 	glewExperimental = GL_TRUE;
@@ -793,4 +886,28 @@ void fitDataIntoView() {
 
 	//camera.nearPlane = nearPlane;
 	//camera.farPlane = farPlane;
+}
+
+// Möller-Trumbore
+bool rayTriangleIntersect(const glm::vec3& orig, const glm::vec3& dir,
+	const glm::vec3& v0, const glm::vec3& v1,
+	const glm::vec3& v2, float& tOut)
+{
+	const float EPS = 1e-6f;
+	glm::vec3 e1 = v1 - v0;
+	glm::vec3 e2 = v2 - v0;
+	glm::vec3 p = glm::cross(dir, e2);
+	float det = glm::dot(e1, p);
+	if (fabs(det) < EPS) return false;
+	float invDet = 1.0f / det;
+	glm::vec3 t = orig - v0;
+	float u = glm::dot(t, p) * invDet;
+	if (u < 0.f || u > 1.f) return false;
+	glm::vec3 q = glm::cross(t, e1);
+	float v = glm::dot(dir, q) * invDet;
+	if (v < 0.f || u + v > 1.f) return false;
+	float tHit = glm::dot(e2, q) * invDet;
+	if (tHit < EPS) return false;
+	tOut = tHit;
+	return true;
 }
