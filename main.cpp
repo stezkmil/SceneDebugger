@@ -66,6 +66,7 @@ std::vector<Primitive> overlayPrimitives;
 int currentFrameIndex = 0;
 Camera camera;
 bool fitView = true;
+bool depthTestNonOverlay = true;
 
 // Create a random number generator and distribution
 std::mt19937 rng(std::random_device{}());
@@ -431,6 +432,8 @@ void renderGUI() {
 		fitView = true;
 	}
 
+	ImGui::Checkbox("Z-buffer test for non-overlay", &depthTestNonOverlay);
+
 	if (!frames.empty()) {
 		if (ImGui::SliderInt("Frame", &currentFrameIndex, 0, frames.size() - 1)) {
 			// optional: fitView = true;
@@ -458,15 +461,21 @@ void renderScene(Shader& shaderProgram) {
 		fitView = false;
 	}
 
-	// Render current frame primitives
-	if (!frames.empty()) {
-		const Frame& frame = frames[currentFrameIndex];
-		renderPrimitives(shaderProgram, frame.primitives);
-	}
 
 	// Render overlay primitives
 	if (!overlayPrimitives.empty()) {
 		renderPrimitives(shaderProgram, overlayPrimitives);
+	}
+
+	// Render current-frame primitives  (non-overlay)
+	if (!frames.empty()) {
+		if (depthTestNonOverlay)
+			glEnable(GL_DEPTH_TEST);
+		else
+			glDisable(GL_DEPTH_TEST);
+		const Frame& frame = frames[currentFrameIndex];
+		renderPrimitives(shaderProgram, frame.primitives);
+		glEnable(GL_DEPTH_TEST);
 	}
 }
 
