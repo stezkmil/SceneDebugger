@@ -38,6 +38,9 @@ bool rayTriangleIntersect(const glm::vec3& orig, const glm::vec3& dir,
 void mouse_button_callback(GLFWwindow* window,
 	int button, int action, int mods);
 
+void key_callback(GLFWwindow* window, int key, int scancode,
+	int action, int mods);
+
 struct Vector3 {
 	float x, y, z;
 };
@@ -261,6 +264,25 @@ void mouse_button_callback(GLFWwindow* window,
 		cam->setTarget(bestPt);
 }
 
+void key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/,
+	int action, int /*mods*/)
+{
+	if (action != GLFW_PRESS && action != GLFW_REPEAT) return;   // only react to press / repeat
+
+	ImGuiIO& io = ImGui::GetIO();
+	if (io.WantCaptureKeyboard) return;                          // let ImGui handle typed text
+
+	if (frames.empty()) return;
+
+	if (key == GLFW_KEY_RIGHT || key == GLFW_KEY_PERIOD) {
+		if (currentFrameIndex < static_cast<int>(frames.size()) - 1)
+			++currentFrameIndex;
+	}
+	else if (key == GLFW_KEY_LEFT || key == GLFW_KEY_COMMA) {
+		if (currentFrameIndex > 0)
+			--currentFrameIndex;
+	}
+}
 
 int main() {
 	// Initialize GLFW
@@ -301,6 +323,8 @@ int main() {
 	glfwSetScrollCallback(window, Camera::scroll_callback);
 
 	glfwSetMouseButtonCallback(window, mouse_button_callback);
+
+	glfwSetKeyCallback(window, key_callback);
 
 	// Initialize GLEW
 	glewExperimental = GL_TRUE;
@@ -435,8 +459,21 @@ void renderGUI() {
 	ImGui::Checkbox("Z-buffer test for non-overlay", &depthTestNonOverlay);
 
 	if (!frames.empty()) {
+		if (ImGui::ArrowButton("##frame_left", ImGuiDir_Left)) {
+			if (currentFrameIndex > 0) --currentFrameIndex;
+		}
+
+		ImGui::SameLine();
+
 		if (ImGui::SliderInt("Frame", &currentFrameIndex, 0, frames.size() - 1)) {
 			// optional: fitView = true;
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::ArrowButton("##frame_right", ImGuiDir_Right)) {
+			if (currentFrameIndex < static_cast<int>(frames.size()) - 1)
+				++currentFrameIndex;
 		}
 
 		ImGui::Text("Primitives:");
