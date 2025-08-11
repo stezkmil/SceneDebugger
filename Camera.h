@@ -17,7 +17,7 @@ public:
 	Camera()
 		: target(0.0f), distance(10.0f), pitch(0.0f), yaw(-90.0f),
 		lastX(0.0f), lastY(0.0f), firstMouse(true),
-		rightButtonPressed(false), middleButtonPressed(false),
+		leftButtonPressed(false), rightButtonPressed(false),
 		nearPlane(0.1f), farPlane(10000.0f) {
 	} // Initialize near and far planes
 
@@ -53,11 +53,11 @@ public:
 		double xpos, ypos;
 		glfwGetCursorPos(window, &xpos, &ypos);
 
-		// Handle rotation with right mouse button
-		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-			if (!rightButtonPressed) {
+		// Handle rotation with left mouse button
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+			if (!leftButtonPressed) {
 				firstMouse = true;
-				rightButtonPressed = true;
+				leftButtonPressed = true;
 			}
 
 			if (firstMouse) {
@@ -76,21 +76,21 @@ public:
 			xoffset *= sensitivity;
 			yoffset *= sensitivity;
 
-			yaw += xoffset;
-			pitch += yoffset;
+			yaw -= xoffset;
+			pitch -= yoffset;
 
 			if (pitch > 89.0f) pitch = 89.0f;
 			if (pitch < -89.0f) pitch = -89.0f;
 		}
 		else {
-			rightButtonPressed = false;
+			leftButtonPressed = false;
 		}
 
-		// Handle panning with middle mouse button
-		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS) {
-			if (!middleButtonPressed) {
+		// Handle panning with right mouse button
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+			if (!rightButtonPressed) {
 				firstMouse = true;
-				middleButtonPressed = true;
+				rightButtonPressed = true;
 			}
 
 			if (firstMouse) {
@@ -120,11 +120,11 @@ public:
 			glm::vec3 up = glm::normalize(glm::cross(right, front));
 
 			// Adjust the target position
-			target -= right * xoffset;
-			target += up * yoffset;
+			target += right * xoffset;
+			target -= up * yoffset;
 		}
 		else {
-			middleButtonPressed = false;
+			rightButtonPressed = false;
 		}
 	}
 
@@ -140,8 +140,8 @@ public:
 private:
 	double lastX, lastY;
 	bool firstMouse;
+	bool leftButtonPressed;
 	bool rightButtonPressed;
-	bool middleButtonPressed;
 };
 
 #endif // CAMERA_H
