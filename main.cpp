@@ -885,6 +885,7 @@ void fitDataIntoView() {
 
 	glm::vec3 minBounds(FLT_MAX);
 	glm::vec3 maxBounds(-FLT_MAX);
+	bool anyVertex = false;
 
 	// Include current frame primitives
 	if (!frames.empty()) {
@@ -894,6 +895,7 @@ void fitDataIntoView() {
 				glm::vec3 position = vert.position;
 				minBounds = glm::min(minBounds, position);
 				maxBounds = glm::max(maxBounds, position);
+				anyVertex = true;
 			}
 		}
 	}
@@ -905,6 +907,7 @@ void fitDataIntoView() {
 				glm::vec3 position = vertex.position;
 				minBounds = glm::min(minBounds, position);
 				maxBounds = glm::max(maxBounds, position);
+				anyVertex = true;
 			}
 		}
 		else {
@@ -912,10 +915,12 @@ void fitDataIntoView() {
 				glm::vec3 position(vert.position.x, vert.position.y, vert.position.z);
 				minBounds = glm::min(minBounds, position);
 				maxBounds = glm::max(maxBounds, position);
+				anyVertex = true;
 			}
 		}
 	}
 
+	if (!anyVertex) return;
 	glm::vec3 center = (minBounds + maxBounds) / 2.0f;
 	float radius = glm::length(maxBounds - minBounds) / 2.0f;
 	radius = std::max(radius, 1.0f);
