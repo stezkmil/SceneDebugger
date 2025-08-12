@@ -1,4 +1,4 @@
-// main.cpp
+﻿// main.cpp
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -58,7 +58,7 @@ struct Primitive {
 	glm::vec4 color;
 };
 
-void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primitives);
+void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primitives, int selectedIndex);
 
 struct Frame {
 	std::vector<Primitive> primitives;
@@ -70,6 +70,18 @@ int currentFrameIndex = 0;
 Camera camera;
 bool fitView = true;
 bool depthTestNonOverlay = true;
+int g_SelectedPrimitive = -1;   // index within current frame, -1 = none
+static int  g_PrevSelected = -1;
+static bool g_RequestScrollToSelection = false;
+
+// whenever you set g_SelectedPrimitive (from picking or list click), do:
+auto setSelection = [](int idx) {
+	g_PrevSelected = g_SelectedPrimitive;
+	if (idx != g_SelectedPrimitive) {
+		g_SelectedPrimitive = idx;
+		g_RequestScrollToSelection = true;   // ask GUI to scroll next frame
+	}
+	};
 
 // Create a random number generator and distribution
 std::mt19937 rng(std::random_device{}());
@@ -180,9 +192,186 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
 }
 
+static float g_LastLPressX = 0.f, g_LastLPressY = 0.f;
+static double g_LastLPressTime = 0.0;
+static bool g_LeftPressed = false;
+
+// Build a world-space ray from mouse (NDC → world)
+static void makePickRay(GLFWwindow* window, const Camera& cam, glm::vec3& rayOrig, glm::vec3& rayDir)
+{
+	double mx, my; glfwGetCursorPos(window, &mx, &my);
+	int w, h;      glfwGetFramebufferSize(window, &w, &h);
+	if (h <= 0) { rayOrig = glm::vec3(0); rayDir = glm::vec3(0, 0, -1); return; }
+
+	float nx = (2.0f * float(mx) / float(w)) - 1.0f;
+	float ny = 1.0f - (2.0f * float(my) / float(h));
+
+	glm::mat4 proj = cam.getProjectionMatrix(float(w) / float(h), cam.nearPlane, cam.farPlane);
+	glm::mat4 view = cam.getViewMatrix();
+	glm::mat4 invPV = glm::inverse(proj * view);
+
+	glm::vec4 pNear = invPV * glm::vec4(nx, ny, -1.f, 1.f);
+	glm::vec4 pFar = invPV * glm::vec4(nx, ny, 1.f, 1.f);
+	pNear /= pNear.w; pFar /= pFar.w;
+
+	rayOrig = glm::vec3(pNear);
+	rayDir = glm::normalize(glm::vec3(pFar) - rayOrig);
+}
+
+// Distance from ray to segment (squared)
+static float raySegmentDist2(const glm::vec3& ro, const glm::vec3& rd,
+	const glm::vec3& a, const glm::vec3& b)
+{
+	// Based on closest points between two lines (ray and segment), clamped to segment.
+	const glm::vec3 u = rd;                 // normalized
+	const glm::vec3 v = b - a;              // segment direction
+	const glm::vec3 w0 = ro - a;
+	float aUU = glm::dot(u, u);             // =1, but keep general
+	float bUV = glm::dot(u, v);
+	float cVV = glm::dot(v, v);
+	float dUW0 = glm::dot(u, w0);
+	float eVW0 = glm::dot(v, w0);
+
+	float denom = aUU * cVV - bUV * bUV;
+	float sc = 0.f, tc = 0.f;
+	if (denom > 1e-12f) {
+		sc = (bUV * eVW0 - cVV * dUW0) / denom;   // along ray
+		tc = (aUU * eVW0 - bUV * dUW0) / denom;   // along segment
+	}
+	else {
+		// nearly parallel: project a→ray and clamp tc
+		sc = -dUW0 / aUU;
+		tc = 0.f;
+	}
+	tc = glm::clamp(tc, 0.f, 1.f);
+	// closest points
+	glm::vec3 Pc = ro + sc * u;
+	glm::vec3 Qc = a + tc * v;
+	return glm::dot(Pc - Qc, Pc - Qc);
+}
+
+// Distance from ray to point (squared)
+static float rayPointDist2(const glm::vec3& ro, const glm::vec3& rd, const glm::vec3& p)
+{
+	glm::vec3 w = p - ro;
+	float t = glm::dot(w, rd);          // along ray
+	glm::vec3 closest = ro + t * rd;
+	glm::vec3 d = p - closest;
+	return glm::dot(d, d);
+}
+
+// Convert a constant pixel radius to world units at depth d.
+// Assumes 45° vertical FOV like Camera::getProjectionMatrix.
+static float pixelRadiusToWorld(float pixels, float depth, int viewportHeight)
+{
+	// size of 1 pixel at depth d: (2 * d * tan(fov/2)) / H
+	const float fovY_deg = 45.0f;
+	const float fovY = glm::radians(fovY_deg);
+	float pixelWorld = (2.0f * depth * tanf(fovY * 0.5f)) / float(std::max(1, viewportHeight));
+	return pixels * pixelWorld;
+}
+
 void mouse_button_callback(GLFWwindow* window,
 	int button, int action, int /*mods*/)
 {
+	if (button == GLFW_MOUSE_BUTTON_LEFT) {
+		if (action == GLFW_PRESS) {
+			double mx, my; glfwGetCursorPos(window, &mx, &my);
+			g_LastLPressX = (float)mx;
+			g_LastLPressY = (float)my;
+			g_LastLPressTime = glfwGetTime();
+			g_LeftPressed = true;
+		}
+		else if (action == GLFW_RELEASE && g_LeftPressed) {
+			g_LeftPressed = false;
+
+			// Click heuristics: short time, little movement
+			double now = glfwGetTime();
+			double dt = now - g_LastLPressTime;
+			double mx, my; glfwGetCursorPos(window, &mx, &my);
+			float dx = float(mx) - g_LastLPressX;
+			float dy = float(my) - g_LastLPressY;
+			float drag2 = dx * dx + dy * dy;
+
+			const double maxClickTime = 0.25;   // seconds
+			const float  maxDrag2 = 6.0f * 6.0f; // pixels^2
+
+			if (dt <= maxClickTime && drag2 <= maxDrag2) {
+				// Perform picking
+				int w, h; glfwGetFramebufferSize(window, &w, &h);
+				if (h > 0 && !frames.empty()) {
+					Camera* cam = static_cast<Camera*>(glfwGetWindowUserPointer(window));
+					glm::vec3 ro, rd; makePickRay(window, *cam, ro, rd);
+
+					// Threshold in pixels → world-radius near the hit depth guess.
+					// We'll test using a few depth guesses; starting with distance to target.
+					float depthGuess = glm::length(cam->getPosition() - cam->target);
+					float pickRadius = pixelRadiusToWorld(6.0f, depthGuess, h); // ~6px
+
+					const auto& f = frames[currentFrameIndex];
+					int bestIdx = -1;
+					float bestMetric = 1e30f; // smaller is better
+
+					// Triangles: normal ray-triangle hit (use t as metric)
+					for (size_t i = 0; i < f.primitives.size(); ++i) {
+						const auto& prim = f.primitives[i];
+						if (prim.type == "drawtriangle" && prim.vertices.size() >= 3) {
+							float t;
+							if (rayTriangleIntersect(ro, rd,
+								prim.vertices[0].position,
+								prim.vertices[1].position,
+								prim.vertices[2].position, t))
+							{
+								if (t < bestMetric) {
+									bestMetric = t;
+									bestIdx = (int)i;
+								}
+							}
+						}
+					}
+
+					// Lines: ray-to-segment distance < pickRadius
+					for (size_t i = 0; i < f.primitives.size(); ++i) {
+						const auto& prim = f.primitives[i];
+						if ((prim.type == "drawline" || prim.type == "overlayline") && prim.vertices.size() >= 2) {
+							float d2 = raySegmentDist2(ro, rd,
+								prim.vertices[0].position,
+								prim.vertices[1].position);
+							if (d2 < pickRadius * pickRadius) {
+								// Use distance along ray to a midpoint as tie-breaker
+								glm::vec3 mid = 0.5f * (prim.vertices[0].position + prim.vertices[1].position);
+								float t = glm::dot((mid - ro), rd);
+								if (t > 0.0f && t < bestMetric) {
+									bestMetric = t;
+									bestIdx = (int)i;
+								}
+							}
+						}
+					}
+
+					// Points: ray-to-point distance < pickRadius
+					for (size_t i = 0; i < f.primitives.size(); ++i) {
+						const auto& prim = f.primitives[i];
+						if (prim.type == "drawpoint" && !prim.vertices.empty()) {
+							float d2 = rayPointDist2(ro, rd, prim.vertices[0].position);
+							if (d2 < pickRadius * pickRadius) {
+								float t = glm::dot((prim.vertices[0].position - ro), rd);
+								if (t > 0.0f && t < bestMetric) {
+									bestMetric = t;
+									bestIdx = (int)i;
+								}
+							}
+						}
+					}
+
+					// Do NOT consider overlay mesh/triangles for selection (as requested)
+
+					setSelection(bestIdx); // -1 if nothing hit
+				}
+			}
+		}
+	}
+
 	// We only care about middle-button presses
 	if (button != GLFW_MOUSE_BUTTON_MIDDLE || action != GLFW_PRESS) return;
 
@@ -197,7 +386,7 @@ void mouse_button_callback(GLFWwindow* window,
 	lastClick = 0.0;                            // reset for next pair
 
 	//--------------------------------------------------------------  
-	// *** Double-click detected � cast a picking ray ***
+	// *** Double-click detected – cast a picking ray ***
 	//--------------------------------------------------------------
 	double mx, my; glfwGetCursorPos(window, &mx, &my);
 	int w, h;      glfwGetFramebufferSize(window, &w, &h);
@@ -258,7 +447,7 @@ void mouse_button_callback(GLFWwindow* window,
 	}
 
 	//--------------------------------------------------------------  
-	// If we hit something � re-centre the camera
+	// If we hit something – re-centre the camera
 	//--------------------------------------------------------------
 	if (bestT < 1e29f)
 		cam->setTarget(bestPt);
@@ -276,11 +465,17 @@ void key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/,
 
 	if (key == GLFW_KEY_RIGHT || key == GLFW_KEY_PERIOD) {
 		if (currentFrameIndex < static_cast<int>(frames.size()) - 1)
+		{
 			++currentFrameIndex;
+			setSelection(-1);
+		}
 	}
 	else if (key == GLFW_KEY_LEFT || key == GLFW_KEY_COMMA) {
 		if (currentFrameIndex > 0)
+		{
 			--currentFrameIndex;
+			setSelection(-1);
+		}
 	}
 }
 
@@ -433,6 +628,7 @@ void renderGUI() {
 			frames.clear();
 			parseInputData(std::string(clipboard));
 			currentFrameIndex = 0;
+			setSelection(-1);
 			fitView = true;
 		}
 	}
@@ -453,6 +649,7 @@ void renderGUI() {
 	if (ImGui::Button("Clear Frames")) {
 		frames.clear();
 		currentFrameIndex = 0;
+		setSelection(-1);
 		fitView = true;
 	}
 
@@ -460,7 +657,11 @@ void renderGUI() {
 
 	if (!frames.empty()) {
 		if (ImGui::ArrowButton("##frame_left", ImGuiDir_Left)) {
-			if (currentFrameIndex > 0) --currentFrameIndex;
+			if (currentFrameIndex > 0)
+			{
+				--currentFrameIndex;
+				setSelection(-1);
+			}
 		}
 
 		ImGui::SameLine();
@@ -473,14 +674,38 @@ void renderGUI() {
 
 		if (ImGui::ArrowButton("##frame_right", ImGuiDir_Right)) {
 			if (currentFrameIndex < static_cast<int>(frames.size()) - 1)
+			{
 				++currentFrameIndex;
+				setSelection(-1);
+			}
 		}
 
 		ImGui::Text("Primitives:");
+
+		// Give the list its own scroll area (height: choose what you like)
+		ImGui::BeginChild("PrimitiveList", ImVec2(0, 260), true, ImGuiWindowFlags_HorizontalScrollbar);
+
 		for (size_t i = 0; i < frames[currentFrameIndex].primitives.size(); ++i) {
 			const auto& prim = frames[currentFrameIndex].primitives[i];
-			ImGui::BulletText("%s %zu (%s)", prim.name.c_str(), i, prim.type.c_str());
+			const bool selected = ((int)i == g_SelectedPrimitive);
+
+			char label[256];
+			snprintf(label, sizeof(label), "%s %zu (%s)", prim.name.c_str(), i, prim.type.c_str());
+
+			if (ImGui::Selectable(label, selected)) {
+				setSelection((int)i);
+			}
+
+			// After the row is submitted, if it’s the (newly) selected one, scroll it into view.
+			if (selected && g_RequestScrollToSelection) {
+				// 0.35 puts it slightly below the top; use 0.5f to center if you prefer.
+				ImGui::SetScrollHereY(0.35f);
+				g_RequestScrollToSelection = false;
+			}
 		}
+
+		ImGui::EndChild();
+
 	}
 	else {
 		ImGui::Text("No frames loaded.");
@@ -501,7 +726,7 @@ void renderScene(Shader& shaderProgram) {
 
 	// Render overlay primitives
 	if (!overlayPrimitives.empty()) {
-		renderPrimitives(shaderProgram, overlayPrimitives);
+		renderPrimitives(shaderProgram, overlayPrimitives, -1);
 	}
 
 	// Render current-frame primitives  (non-overlay)
@@ -511,16 +736,19 @@ void renderScene(Shader& shaderProgram) {
 		else
 			glDisable(GL_DEPTH_TEST);
 		const Frame& frame = frames[currentFrameIndex];
-		renderPrimitives(shaderProgram, frame.primitives);
+		renderPrimitives(shaderProgram, frame.primitives, g_SelectedPrimitive);
 		glEnable(GL_DEPTH_TEST);
 	}
 }
 
-void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primitives) {
-	for (const auto& prim : primitives) {
+void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primitives, int selectedIndex) {
+	for (size_t i = 0; i < primitives.size(); ++i) {
+		const auto& prim = primitives[i];
 		if (prim.vertices.empty()) continue;
 
-		// Special handling for overlay mesh
+		const bool isSelected = (int)i == selectedIndex;
+
+		// --- Overlay mesh stays as-is (never selected) ---
 		if (prim.type == "overlaymesh") {
 			static GLuint overlayVAO = 0, overlayVBO = 0, overlayEBO = 0;
 			static size_t numIndices = 0;
@@ -538,11 +766,9 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, overlayEBO);
 				glBufferData(GL_ELEMENT_ARRAY_BUFFER, prim.indices.size() * sizeof(unsigned int), prim.indices.data(), GL_STATIC_DRAW);
 
-				// Vertex positions
 				glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
 				glEnableVertexAttribArray(0);
 
-				// Vertex normals
 				glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
 				glEnableVertexAttribArray(1);
 
@@ -554,56 +780,74 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 			shaderProgram.setBool("useLighting", true);
 			shaderProgram.setVec4("primitiveColor", glm::vec4(0.7f, 0.7f, 0.7f, 1.0f));
 			glBindVertexArray(overlayVAO);
-			glDrawElements(GL_TRIANGLES, numIndices, GL_UNSIGNED_INT, 0);
+			glDrawElements(GL_TRIANGLES, (GLsizei)numIndices, GL_UNSIGNED_INT, 0);
 			glBindVertexArray(0);
+			continue;
 		}
-		else {
-			GLuint VAO, VBO;
-			glGenVertexArrays(1, &VAO);
-			glGenBuffers(1, &VBO);
 
-			std::vector<float> vertices;
-			vertices.reserve(prim.vertices.size() * 3);
-			for (const auto& v : prim.vertices) {
-				vertices.push_back(v.position.x);
-				vertices.push_back(v.position.y);
-				vertices.push_back(v.position.z);
-			}
+		// --- Non-overlay (points/lines/triangles) ---
+		GLuint VAO = 0, VBO = 0;
+		glGenVertexArrays(1, &VAO);
+		glGenBuffers(1, &VBO);
 
-			glBindVertexArray(VAO);
-
-			glBindBuffer(GL_ARRAY_BUFFER, VBO);
-			glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-
-			// Vertex positions
-			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-			glEnableVertexAttribArray(0);
-
-			shaderProgram.setBool("useLighting", false);
-
-			// Set the primitive color uniform
-			shaderProgram.setVec4("primitiveColor", prim.color);
-
-			// Draw the primitive
-			if (prim.type == "drawtriangle" || prim.type == "overlaytriangle") {
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-			}
-			else if (prim.type == "drawline" || prim.type == "overlayline") {
-				glDrawArrays(GL_LINES, 0, 2);
-			}
-			else if (prim.type == "drawpoint") {
-				glPointSize(5.0f); // Adjust the size as needed
-				glDrawArrays(GL_POINTS, 0, (GLsizei)prim.vertices.size());
-			}
-
-			// Cleanup
-			glBindBuffer(GL_ARRAY_BUFFER, 0);
-			glBindVertexArray(0);
-			glDeleteBuffers(1, &VBO);
-			glDeleteVertexArrays(1, &VAO);
+		std::vector<float> positions;
+		positions.reserve(prim.vertices.size() * 3);
+		for (const auto& v : prim.vertices) {
+			positions.push_back(v.position.x);
+			positions.push_back(v.position.y);
+			positions.push_back(v.position.z);
 		}
+
+		glBindVertexArray(VAO);
+		glBindBuffer(GL_ARRAY_BUFFER, VBO);
+		glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(float), positions.data(), GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(0);
+
+		shaderProgram.setBool("useLighting", false);
+
+		// Compute draw color (boost/saturate when selected)
+		auto boosted = [&](const glm::vec4& c) -> glm::vec4 {
+			// mix toward yellowish for visibility, clamp to 1
+			glm::vec3 target(1.0f, 1.0f, 0.2f);
+			glm::vec3 rgb = glm::mix(glm::vec3(c), target, 0.5f);
+			return glm::vec4(glm::min(rgb * 1.1f, glm::vec3(1.0f)), 1.0f);
+			};
+		glm::vec4 drawColor = isSelected ? boosted(prim.color) : prim.color;
+		shaderProgram.setVec4("primitiveColor", drawColor);
+
+		if (prim.type == "drawtriangle") {
+			// filled
+			glDrawArrays(GL_TRIANGLES, 0, 3);
+
+			if (isSelected) {
+				// quick outline for clarity
+				glLineWidth(2.5f);
+				shaderProgram.setVec4("primitiveColor", glm::vec4(1.0f, 1.0f, 0.2f, 1.0f));
+				glDrawArrays(GL_LINE_LOOP, 0, 3);
+				glLineWidth(1.0f);
+			}
+		}
+		else if (prim.type == "drawline" || prim.type == "overlayline") {
+			if (isSelected) glLineWidth(3.0f);
+			glDrawArrays(GL_LINES, 0, 2);
+			if (isSelected) glLineWidth(1.0f);
+		}
+		else if (prim.type == "drawpoint") {
+			if (isSelected) glPointSize(9.0f); else glPointSize(5.0f);
+			glDrawArrays(GL_POINTS, 0, (GLsizei)prim.vertices.size());
+			glPointSize(1.0f); // restore default
+		}
+
+		// Cleanup
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+		glDeleteBuffers(1, &VBO);
+		glDeleteVertexArrays(1, &VAO);
 	}
 }
+
 
 // Updated parseInputData to handle optional RGBA color bracket
 void parseInputData(const std::string& data) {
@@ -939,7 +1183,7 @@ void fitDataIntoView() {
 	//camera.farPlane = farPlane;
 }
 
-// M�ller-Trumbore
+// Möller-Trumbore
 bool rayTriangleIntersect(const glm::vec3& orig, const glm::vec3& dir,
 	const glm::vec3& v0, const glm::vec3& v1,
 	const glm::vec3& v2, float& tOut)

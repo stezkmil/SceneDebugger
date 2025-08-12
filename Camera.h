@@ -21,7 +21,7 @@ public:
 		nearPlane(0.1f), farPlane(10000.0f) {
 	} // Initialize near and far planes
 
-	glm::mat4 getViewMatrix() {
+	glm::mat4 getViewMatrix() const {
 		glm::vec3 position;
 		// spherical coords with Z-up
 		position.x = target.x + distance * cos(glm::radians(pitch)) * cos(glm::radians(yaw));
@@ -32,7 +32,7 @@ public:
 		return glm::lookAt(position, target, glm::vec3(0, 0, 1));
 	}
 
-	glm::mat4 getProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) {
+	glm::mat4 getProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) const {
 		return glm::perspective(glm::radians(45.0f), aspectRatio, nearPlane, farPlane);
 	}
 
