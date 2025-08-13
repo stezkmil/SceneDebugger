@@ -748,10 +748,14 @@ void renderGUI() {
 			const auto& prim = frames[currentFrameIndex].primitives[i];
 			const bool selected = ((int)i == g_SelectedPrimitive);
 
-			char label[256];
-			snprintf(label, sizeof(label), "%s %zu (%s)", prim.name.c_str(), i, prim.type.c_str());
+			std::string coords;
+			for (const auto& v : prim.vertices)
+			{
+				coords += "[" + std::to_string(v.position.x) + "," + std::to_string(v.position.y) + "," + std::to_string(v.position.z) + "]";
+			}
+			std::string label = prim.name + " " + std::to_string(i) + " (" + prim.type + " " + coords + ")";
 
-			if (ImGui::Selectable(label, selected)) {
+			if (ImGui::Selectable(label.c_str(), selected)) {
 				setSelection((int)i);
 			}
 
