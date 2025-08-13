@@ -87,6 +87,55 @@ auto setSelection = [](int idx) {
 std::mt19937 rng(std::random_device{}());
 std::uniform_real_distribution<float> colorDist(0.0f, 1.0f);
 
+// --- Stable "random" color from an integer id -------------------------------
+static inline uint32_t pcg_hash(uint32_t x) {
+	// PCG-inspired integer hash. Fast and decent distribution.
+	x ^= x >> 16;
+	x *= 0x7feb352dU;
+	x ^= x >> 15;
+	x *= 0x846ca68bU;
+	x ^= x >> 16;
+	return x;
+}
+
+static inline void hsv2rgb(float H, float S, float V, float& r, float& g, float& b) {
+	// H in [0,1), S,V in [0,1]
+	float h = H * 6.0f;
+	int i = (int)h;
+	float f = h - i;
+	float p = V * (1.0f - S);
+	float q = V * (1.0f - S * f);
+	float t = V * (1.0f - S * (1.0f - f));
+	switch (i % 6) {
+	case 0: r = V; g = t; b = p; break;
+	case 1: r = q; g = V; b = p; break;
+	case 2: r = p; g = V; b = t; break;
+	case 3: r = p; g = q; b = V; break;
+	case 4: r = t; g = p; b = V; break;
+	case 5: r = V; g = p; b = q; break;
+	}
+}
+
+// Optional: tweak to taste. Lower S gives more pastel, higher V gives brighter.
+static inline ImVec4 stableColorFromId(uint32_t id, float S = 0.65f, float V = 1.0f, float A = 1.0f) {
+	uint32_t h = pcg_hash(id);
+	// Use different hashed bits for hue/sat/val slight jitter (keeps variety)
+	float H = (h & 0xFFFFu) / 65535.0f;                 // hue in [0,1)
+	float sJit = ((h >> 16) & 0xFFu) / 255.0f * 0.10f;  // +/- 0.05 jitter
+	float vJit = ((h >> 24) & 0xFFu) / 255.0f * 0.10f;  // +/- 0.05 jitter
+	float r, g, b;
+	hsv2rgb(H, std::clamp(S - 0.05f + sJit, 0.3f, 0.9f),
+		std::clamp(V - 0.05f + vJit, 0.6f, 1.0f), r, g, b);
+	return ImVec4(r, g, b, A);
+}
+
+// If you want separation by primitive type too, combine like this:
+template <class T>
+static inline uint32_t hashCombine32(uint32_t a, T b) {
+	return pcg_hash(a ^ (uint32_t)pcg_hash((uint32_t)b + 0x9e3779b9u + (a << 6) + (a >> 2)));
+}
+
+
 void parseOBJData(const std::string& data) {
 
 	// At the beginning of parseOBJData()
@@ -477,6 +526,9 @@ void key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/,
 			setSelection(-1);
 		}
 	}
+	else if (key == GLFW_KEY_F) {
+		fitView = true;
+	}
 }
 
 int main() {
@@ -654,6 +706,13 @@ void renderGUI() {
 	}
 
 	ImGui::Checkbox("Z-buffer test for non-overlay", &depthTestNonOverlay);
+
+	ImGui::SameLine();
+	if (ImGui::Button("Fit View")) {
+		fitView = true;   // next render pass will call fitDataIntoView()
+	}
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Compute bounds of current frame + overlay and frame the view");
 
 	if (!frames.empty()) {
 		if (ImGui::ArrowButton("##frame_left", ImGuiDir_Left)) {
@@ -855,7 +914,7 @@ void parseInputData(const std::string& data) {
 	Frame currentFrame;
 	bool inFrame = false;
 
-	auto parseOptionalColor = [&](glm::vec4& color) {
+	auto parseOptionalColor = [&](glm::vec4& color, size_t index) {
 		// Skip whitespace
 		while (it != data.end() && std::isspace(*it)) ++it;
 
@@ -892,7 +951,8 @@ void parseInputData(const std::string& data) {
 		}
 		else {
 			// No bracket found, use random color
-			color = glm::vec4(colorDist(rng), colorDist(rng), colorDist(rng), 1.0f);
+			ImVec4 stableColor = stableColorFromId(static_cast<uint32_t>(index));
+			color = glm::vec4(stableColor.x, stableColor.y, stableColor.z, 1.0f);
 		}
 		};
 
@@ -977,7 +1037,7 @@ void parseInputData(const std::string& data) {
 			prim.vertices = vertices;
 
 			// Parse optional color
-			parseOptionalColor(prim.color);
+			parseOptionalColor(prim.color, currentFrame.primitives.size());
 
 			currentFrame.primitives.push_back(prim);
 		}
@@ -1043,7 +1103,7 @@ void parseInputData(const std::string& data) {
 			prim.vertices = vertices;
 
 			// Parse optional color
-			parseOptionalColor(prim.color);
+			parseOptionalColor(prim.color, currentFrame.primitives.size());
 
 			currentFrame.primitives.push_back(prim);
 		}
@@ -1107,7 +1167,7 @@ void parseInputData(const std::string& data) {
 			prim.vertices.push_back(vtx);
 
 			// Parse optional color
-			parseOptionalColor(prim.color);
+			parseOptionalColor(prim.color, currentFrame.primitives.size());
 
 			currentFrame.primitives.push_back(prim);
 		}
