@@ -1,7 +1,7 @@
 # SceneDebugger
 Lightweight visualizer/debugger of 3D data with a multi-frame capability.
 
-https://youtu.be/1nDSMMvp-Uw
+[![Watch the video](https://img.youtube.com/vi/1nDSMMvp-Uw/hqdefault.jpg)](https://www.youtube.com/watch?v=1nDSMMvp-Uw)
 
 You just need to have something like this in your clipboard (most likely copied from the log file of your debugged 3d app) and then you just hit the Paste From Clipboard button in the app gui:
 
