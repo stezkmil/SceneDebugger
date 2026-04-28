@@ -129,6 +129,11 @@ public:
 	}
 
 	static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+		(void)xoffset;
+
+		ImGuiIO& io = ImGui::GetIO();
+		if (io.WantCaptureMouse) return;
+
 		Camera* cam = static_cast<Camera*>(glfwGetWindowUserPointer(window));
 		if (cam) {
 			cam->distance *= (1.0f - static_cast<float>(yoffset) * 0.1f);

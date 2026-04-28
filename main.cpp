@@ -52,7 +52,8 @@ struct Vertex {
 
 struct Primitive {
 	std::string name;
-	std::string type; // "drawtriangle", "drawline", "drawpoint", "overlaymesh"
+	std::string type; // "drawtriangle", "drawline", "drawpoint", "drawbox", "overlaymesh"
+	std::string displayCoords;
 	std::vector<Vertex> vertices;
 	std::vector<unsigned int> indices; // For indexed drawing (overlaymesh)
 	glm::vec4 color;
@@ -73,6 +74,7 @@ bool depthTestNonOverlay = true;
 int g_SelectedPrimitive = -1;   // index within current frame, -1 = none
 static int  g_PrevSelected = -1;
 static bool g_RequestScrollToSelection = false;
+static bool g_PrimitiveListActive = false;
 
 // whenever you set g_SelectedPrimitive (from picking or list click), do:
 auto setSelection = [](int idx) {
@@ -127,6 +129,10 @@ static inline ImVec4 stableColorFromId(uint32_t id, float S = 0.65f, float V = 1
 	hsv2rgb(H, std::clamp(S - 0.05f + sJit, 0.3f, 0.9f),
 		std::clamp(V - 0.05f + vJit, 0.6f, 1.0f), r, g, b);
 	return ImVec4(r, g, b, A);
+}
+
+static inline std::string formatVec3(const glm::vec3& v) {
+	return "[" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "]";
 }
 
 // If you want separation by primitive type too, combine like this:
@@ -379,20 +385,22 @@ void mouse_button_callback(GLFWwindow* window,
 						}
 					}
 
-					// Lines: ray-to-segment distance < pickRadius
+					// Lines/boxes: ray-to-segment distance < pickRadius
 					for (size_t i = 0; i < f.primitives.size(); ++i) {
 						const auto& prim = f.primitives[i];
-						if ((prim.type == "drawline" || prim.type == "overlayline") && prim.vertices.size() >= 2) {
-							float d2 = raySegmentDist2(ro, rd,
-								prim.vertices[0].position,
-								prim.vertices[1].position);
-							if (d2 < pickRadius * pickRadius) {
-								// Use distance along ray to a midpoint as tie-breaker
-								glm::vec3 mid = 0.5f * (prim.vertices[0].position + prim.vertices[1].position);
-								float t = glm::dot((mid - ro), rd);
-								if (t > 0.0f && t < bestMetric) {
-									bestMetric = t;
-									bestIdx = (int)i;
+						if ((prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox") && prim.vertices.size() >= 2) {
+							for (size_t j = 0; j + 1 < prim.vertices.size(); j += 2) {
+								float d2 = raySegmentDist2(ro, rd,
+									prim.vertices[j].position,
+									prim.vertices[j + 1].position);
+								if (d2 < pickRadius * pickRadius) {
+									// Use distance along ray to a midpoint as tie-breaker
+									glm::vec3 mid = 0.5f * (prim.vertices[j].position + prim.vertices[j + 1].position);
+									float t = glm::dot((mid - ro), rd);
+									if (t > 0.0f && t < bestMetric) {
+										bestMetric = t;
+										bestIdx = (int)i;
+									}
 								}
 							}
 						}
@@ -506,6 +514,24 @@ void key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/,
 	int action, int /*mods*/)
 {
 	if (action != GLFW_PRESS && action != GLFW_REPEAT) return;   // only react to press / repeat
+
+	if (!frames.empty() && g_PrimitiveListActive && (key == GLFW_KEY_UP || key == GLFW_KEY_DOWN)) {
+		const int primitiveCount = static_cast<int>(frames[currentFrameIndex].primitives.size());
+		if (primitiveCount > 0) {
+			int selected = g_SelectedPrimitive;
+			if (selected < 0) {
+				selected = (key == GLFW_KEY_DOWN) ? 0 : primitiveCount - 1;
+			}
+			else if (key == GLFW_KEY_DOWN && selected < primitiveCount - 1) {
+				++selected;
+			}
+			else if (key == GLFW_KEY_UP && selected > 0) {
+				--selected;
+			}
+			setSelection(selected);
+		}
+		return;
+	}
 
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.WantCaptureKeyboard) return;                          // let ImGui handle typed text
@@ -743,15 +769,21 @@ void renderGUI() {
 
 		// Give the list its own scroll area (height: choose what you like)
 		ImGui::BeginChild("PrimitiveList", ImVec2(0, 260), true, ImGuiWindowFlags_HorizontalScrollbar);
+		g_PrimitiveListActive = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) || ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		for (size_t i = 0; i < frames[currentFrameIndex].primitives.size(); ++i) {
 			const auto& prim = frames[currentFrameIndex].primitives[i];
 			const bool selected = ((int)i == g_SelectedPrimitive);
 
 			std::string coords;
-			for (const auto& v : prim.vertices)
-			{
-				coords += "[" + std::to_string(v.position.x) + "," + std::to_string(v.position.y) + "," + std::to_string(v.position.z) + "]";
+			if (!prim.displayCoords.empty()) {
+				coords = prim.displayCoords;
+			}
+			else {
+				for (const auto& v : prim.vertices)
+				{
+					coords += formatVec3(v.position);
+				}
 			}
 			std::string label = prim.name + " " + std::to_string(i) + " (" + prim.type + " " + coords + ")";
 
@@ -771,6 +803,7 @@ void renderGUI() {
 
 	}
 	else {
+		g_PrimitiveListActive = false;
 		ImGui::Text("No frames loaded.");
 	}
 
@@ -892,9 +925,9 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 				glLineWidth(1.0f);
 			}
 		}
-		else if (prim.type == "drawline" || prim.type == "overlayline") {
+		else if (prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox") {
 			if (isSelected) glLineWidth(3.0f);
-			glDrawArrays(GL_LINES, 0, 2);
+			glDrawArrays(GL_LINES, 0, (GLsizei)prim.vertices.size());
 			if (isSelected) glLineWidth(1.0f);
 		}
 		else if (prim.type == "drawpoint") {
@@ -958,6 +991,70 @@ void parseInputData(const std::string& data) {
 			ImVec4 stableColor = stableColorFromId(static_cast<uint32_t>(index));
 			color = glm::vec4(stableColor.x, stableColor.y, stableColor.z, 1.0f);
 		}
+		};
+
+	auto parseOptionalName = [&](const std::string& fallback) {
+		while (it != data.end() && std::isspace(*it)) ++it;
+
+		if (it != data.end() && *it == '"') {
+			++it;
+			std::string name;
+			while (it != data.end() && *it != '"') {
+				name += *it;
+				++it;
+			}
+			if (it != data.end()) ++it;
+			return name;
+		}
+
+		return fallback;
+		};
+
+	auto parseBracketedVertex = [&]() {
+		Vertex vert{};
+		vert.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+		while (it != data.end() && *it != '[') ++it;
+		if (it == data.end()) return vert;
+		++it; // skip '['
+
+		std::string numStr;
+		int coordIndex = 0;
+		while (it != data.end() && *it != ']') {
+			if (std::isdigit(*it) || *it == '.' || *it == '-' || *it == '+' || *it == 'e' || *it == 'E') {
+				numStr += *it;
+			}
+			else if (*it == ',') {
+				if (!numStr.empty()) {
+					float val = std::stof(numStr);
+					if (coordIndex == 0) vert.position.x = val;
+					else if (coordIndex == 1) vert.position.y = val;
+					numStr.clear();
+					++coordIndex;
+				}
+			}
+			++it;
+		}
+		if (!numStr.empty()) {
+			float val = std::stof(numStr);
+			if (coordIndex == 0) vert.position.x = val;
+			else if (coordIndex == 1) vert.position.y = val;
+			else vert.position.z = val;
+			numStr.clear();
+		}
+		if (it != data.end()) ++it; // skip ']'
+
+		return vert;
+		};
+
+	auto addBoxEdge = [](std::vector<Vertex>& vertices, const glm::vec3& a, const glm::vec3& b) {
+		Vertex va{};
+		Vertex vb{};
+		va.position = a;
+		vb.position = b;
+		va.normal = vb.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+		vertices.push_back(va);
+		vertices.push_back(vb);
 		};
 
 	while (it != data.end()) {
@@ -1039,6 +1136,46 @@ void parseInputData(const std::string& data) {
 				if (it != data.end()) ++it; // skip ']'
 			}
 			prim.vertices = vertices;
+
+			// Parse optional color
+			parseOptionalColor(prim.color, currentFrame.primitives.size());
+
+			currentFrame.primitives.push_back(prim);
+		}
+		// Check for drawbox
+		else if (std::distance(it, data.end()) >= 7 && std::equal(it, it + 7, "drawbox")) {
+			it += 7;
+			Primitive prim;
+			prim.type = "drawbox";
+			prim.name = parseOptionalName("Unnamed Box");
+
+			Vertex cornerA = parseBracketedVertex();
+			Vertex cornerB = parseBracketedVertex();
+			glm::vec3 minCorner = glm::min(cornerA.position, cornerB.position);
+			glm::vec3 maxCorner = glm::max(cornerA.position, cornerB.position);
+			prim.displayCoords = formatVec3(minCorner) + formatVec3(maxCorner);
+
+			glm::vec3 p000(minCorner.x, minCorner.y, minCorner.z);
+			glm::vec3 p100(maxCorner.x, minCorner.y, minCorner.z);
+			glm::vec3 p110(maxCorner.x, maxCorner.y, minCorner.z);
+			glm::vec3 p010(minCorner.x, maxCorner.y, minCorner.z);
+			glm::vec3 p001(minCorner.x, minCorner.y, maxCorner.z);
+			glm::vec3 p101(maxCorner.x, minCorner.y, maxCorner.z);
+			glm::vec3 p111(maxCorner.x, maxCorner.y, maxCorner.z);
+			glm::vec3 p011(minCorner.x, maxCorner.y, maxCorner.z);
+
+			addBoxEdge(prim.vertices, p000, p100);
+			addBoxEdge(prim.vertices, p100, p110);
+			addBoxEdge(prim.vertices, p110, p010);
+			addBoxEdge(prim.vertices, p010, p000);
+			addBoxEdge(prim.vertices, p001, p101);
+			addBoxEdge(prim.vertices, p101, p111);
+			addBoxEdge(prim.vertices, p111, p011);
+			addBoxEdge(prim.vertices, p011, p001);
+			addBoxEdge(prim.vertices, p000, p001);
+			addBoxEdge(prim.vertices, p100, p101);
+			addBoxEdge(prim.vertices, p110, p111);
+			addBoxEdge(prim.vertices, p010, p011);
 
 			// Parse optional color
 			parseOptionalColor(prim.color, currentFrame.primitives.size());
