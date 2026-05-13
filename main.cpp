@@ -52,7 +52,7 @@ struct Vertex {
 
 struct Primitive {
 	std::string name;
-	std::string type; // "drawtriangle", "drawline", "drawpoint", "drawbox", "overlaymesh"
+	std::string type; // "drawtriangle", "drawline", "drawpoint", "drawbox", "drawtetra", "overlaymesh"
 	std::string displayCoords;
 	std::vector<Vertex> vertices;
 	std::vector<unsigned int> indices; // For indexed drawing (overlaymesh)
@@ -385,10 +385,10 @@ void mouse_button_callback(GLFWwindow* window,
 						}
 					}
 
-					// Lines/boxes: ray-to-segment distance < pickRadius
+					// Lines/boxes/tetrahedra: ray-to-segment distance < pickRadius
 					for (size_t i = 0; i < f.primitives.size(); ++i) {
 						const auto& prim = f.primitives[i];
-						if ((prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox") && prim.vertices.size() >= 2) {
+						if ((prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox" || prim.type == "drawtetra") && prim.vertices.size() >= 2) {
 							for (size_t j = 0; j + 1 < prim.vertices.size(); j += 2) {
 								float d2 = raySegmentDist2(ro, rd,
 									prim.vertices[j].position,
@@ -925,7 +925,7 @@ void renderPrimitives(Shader& shaderProgram, const std::vector<Primitive>& primi
 				glLineWidth(1.0f);
 			}
 		}
-		else if (prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox") {
+		else if (prim.type == "drawline" || prim.type == "overlayline" || prim.type == "drawbox" || prim.type == "drawtetra") {
 			if (isSelected) glLineWidth(3.0f);
 			glDrawArrays(GL_LINES, 0, (GLsizei)prim.vertices.size());
 			if (isSelected) glLineWidth(1.0f);
@@ -1047,7 +1047,7 @@ void parseInputData(const std::string& data) {
 		return vert;
 		};
 
-	auto addBoxEdge = [](std::vector<Vertex>& vertices, const glm::vec3& a, const glm::vec3& b) {
+	auto addPrimitiveEdge = [](std::vector<Vertex>& vertices, const glm::vec3& a, const glm::vec3& b) {
 		Vertex va{};
 		Vertex vb{};
 		va.position = a;
@@ -1164,18 +1164,43 @@ void parseInputData(const std::string& data) {
 			glm::vec3 p111(maxCorner.x, maxCorner.y, maxCorner.z);
 			glm::vec3 p011(minCorner.x, maxCorner.y, maxCorner.z);
 
-			addBoxEdge(prim.vertices, p000, p100);
-			addBoxEdge(prim.vertices, p100, p110);
-			addBoxEdge(prim.vertices, p110, p010);
-			addBoxEdge(prim.vertices, p010, p000);
-			addBoxEdge(prim.vertices, p001, p101);
-			addBoxEdge(prim.vertices, p101, p111);
-			addBoxEdge(prim.vertices, p111, p011);
-			addBoxEdge(prim.vertices, p011, p001);
-			addBoxEdge(prim.vertices, p000, p001);
-			addBoxEdge(prim.vertices, p100, p101);
-			addBoxEdge(prim.vertices, p110, p111);
-			addBoxEdge(prim.vertices, p010, p011);
+			addPrimitiveEdge(prim.vertices, p000, p100);
+			addPrimitiveEdge(prim.vertices, p100, p110);
+			addPrimitiveEdge(prim.vertices, p110, p010);
+			addPrimitiveEdge(prim.vertices, p010, p000);
+			addPrimitiveEdge(prim.vertices, p001, p101);
+			addPrimitiveEdge(prim.vertices, p101, p111);
+			addPrimitiveEdge(prim.vertices, p111, p011);
+			addPrimitiveEdge(prim.vertices, p011, p001);
+			addPrimitiveEdge(prim.vertices, p000, p001);
+			addPrimitiveEdge(prim.vertices, p100, p101);
+			addPrimitiveEdge(prim.vertices, p110, p111);
+			addPrimitiveEdge(prim.vertices, p010, p011);
+
+			// Parse optional color
+			parseOptionalColor(prim.color, currentFrame.primitives.size());
+
+			currentFrame.primitives.push_back(prim);
+		}
+		// Check for drawtetra
+		else if (std::distance(it, data.end()) >= 9 && std::equal(it, it + 9, "drawtetra")) {
+			it += 9;
+			Primitive prim;
+			prim.type = "drawtetra";
+			prim.name = parseOptionalName("Unnamed Tetra");
+
+			Vertex a = parseBracketedVertex();
+			Vertex b = parseBracketedVertex();
+			Vertex c = parseBracketedVertex();
+			Vertex d = parseBracketedVertex();
+			prim.displayCoords = formatVec3(a.position) + formatVec3(b.position) + formatVec3(c.position) + formatVec3(d.position);
+
+			addPrimitiveEdge(prim.vertices, a.position, b.position);
+			addPrimitiveEdge(prim.vertices, a.position, c.position);
+			addPrimitiveEdge(prim.vertices, a.position, d.position);
+			addPrimitiveEdge(prim.vertices, b.position, c.position);
+			addPrimitiveEdge(prim.vertices, b.position, d.position);
+			addPrimitiveEdge(prim.vertices, c.position, d.position);
 
 			// Parse optional color
 			parseOptionalColor(prim.color, currentFrame.primitives.size());
